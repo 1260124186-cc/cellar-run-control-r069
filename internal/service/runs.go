@@ -169,7 +169,9 @@ func (s *Service) AbortRun(
 			} else if err := vessel.ReleaseReservation(run.ID, s.clock.Now()); err != nil {
 				return err
 			}
-			vessel.AdvanceCycle(run.ID, s.clock.Now())
+			// Aborting a run only releases or schedules the vessel for
+			// cleaning; it never occupies a production cycle. The cycle index
+			// pinned at reservation time stays with the run.
 			snapshot.Vessels[vessel.ID] = vessel
 			updatedVessel = vessel
 		}

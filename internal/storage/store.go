@@ -85,19 +85,22 @@ func normalizeSnapshot(value domain.Snapshot) (domain.Snapshot, error) {
 	return value, nil
 }
 
-// normalizeCycleLedger rebuilds the vessel production cycle ledger from the
-// persisted runs so that the count and the run cycle identities agree after a
-// restart.
+// normalizeCycleLedger reconciles the vessel production cycle ledger with the
+// persisted runs after a restart. The used-cycle count is a derived fact: it
+// equals the number of runs that actually completed on a vessel. A run's cycle
+// index is pinned when the run reserves its vessel and is never rewritten, so
+// aborted runs keep their original slot without consuming a cycle. The "last
+// cycle" run is selected deterministically (highest completed cycle index, then
+// latest end time, then run identifier) instead of relying on map order.
 func normalizeCycleLedger(value *domain.Snapshot) {
-	completed := make(map[string]int, len(value.Vessels))
 	type cycleMark struct {
 		runID string
-		ended time.Time
+
+		cycleIndex int
+		ended      time.Time
 	}
+	completed := make(map[string]int, len(value.Vessels))
 	latest := make(map[string]cycleMark, len(value.Vessels))
-	for id := range value.Vessels {
-		completed[id] = 0
-	}
 	for _, run := range value.Runs {
 		if run.State != domain.RunCompleted || run.VesselID == nil {
 			continue
@@ -107,28 +110,31 @@ func normalizeCycleLedger(value *domain.Snapshot) {
 			continue
 		}
 		completed[vesselID]++
-		if mark, ok := latest[vesselID]; !ok || cycleEndedAt(run).After(mark.ended) {
-			latest[vesselID] = cycleMark{runID: run.ID, ended: cycleEndedAt(run)}
+		mark := cycleMark{
+			runID:      run.ID,
+			cycleIndex: run.CycleIndex,
+			ended:      cycleEndedAt(run),
+		}
+		if current, ok := latest[vesselID]; !ok ||
+			mark.cycleIndex > current.cycleIndex ||
+			(mark.cycleIndex == current.cycleIndex &&
+				(mark.ended.After(current.ended) ||
+					(mark.ended.Equal(current.ended) && mark.runID > current.runID))) {
+			latest[vesselID] = mark
 		}
 	}
 	for id, vessel := range value.Vessels {
 		vessel.CompletedCycles = completed[id]
 		if mark, ok := latest[id]; ok {
 			identifier := mark.runID
-			vessel.LastCycleRunID = &identifier
 			stamp := mark.ended
+			vessel.LastCycleRunID = &identifier
 			vessel.LastCycleAt = &stamp
+		} else {
+			vessel.LastCycleRunID = nil
+			vessel.LastCycleAt = nil
 		}
 		value.Vessels[id] = vessel
-	}
-	for key, run := range value.Runs {
-		if run.VesselID == nil {
-			continue
-		}
-		if count, ok := completed[*run.VesselID]; ok {
-			run.CycleIndex = count
-		}
-		value.Runs[key] = run
 	}
 }
 
