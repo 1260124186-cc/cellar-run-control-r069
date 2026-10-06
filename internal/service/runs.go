@@ -169,7 +169,9 @@ func (s *Service) AbortRun(
 			} else if err := vessel.ReleaseReservation(run.ID, s.clock.Now()); err != nil {
 				return err
 			}
-			vessel.AdvanceCycle(run.ID, s.clock.Now())
+			// Aborting a run never closes a production cycle: the vessel's
+			// used rounds advance only on completion. The run keeps whatever
+			// cycle index it was assigned when it reserved the vessel.
 			snapshot.Vessels[vessel.ID] = vessel
 			updatedVessel = vessel
 		}

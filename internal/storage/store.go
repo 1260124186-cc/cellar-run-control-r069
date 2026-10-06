@@ -86,8 +86,12 @@ func normalizeSnapshot(value domain.Snapshot) (domain.Snapshot, error) {
 }
 
 // normalizeCycleLedger rebuilds the vessel production cycle ledger from the
-// persisted runs so that the count and the run cycle identities agree after a
-// restart.
+// persisted runs so that the count and the last completed cycle agree after a
+// restart. CompletedCycles is derived solely from completed runs because only
+// a run that finished fermentation closes a production cycle. Each run owns
+// the cycle index assigned when it reserved its vessel; that assignment is
+// immutable and must never be rewritten here, even for aborted or still-open
+// runs.
 func normalizeCycleLedger(value *domain.Snapshot) {
 	completed := make(map[string]int, len(value.Vessels))
 	type cycleMark struct {
@@ -118,17 +122,11 @@ func normalizeCycleLedger(value *domain.Snapshot) {
 			vessel.LastCycleRunID = &identifier
 			stamp := mark.ended
 			vessel.LastCycleAt = &stamp
+		} else {
+			vessel.LastCycleRunID = nil
+			vessel.LastCycleAt = nil
 		}
 		value.Vessels[id] = vessel
-	}
-	for key, run := range value.Runs {
-		if run.VesselID == nil {
-			continue
-		}
-		if count, ok := completed[*run.VesselID]; ok {
-			run.CycleIndex = count
-		}
-		value.Runs[key] = run
 	}
 }
 
